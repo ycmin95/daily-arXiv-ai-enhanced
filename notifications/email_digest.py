@@ -180,16 +180,64 @@ def send_email_via_smtp(
     msg.attach(part1)
     msg.attach(part2)
     
+    server = None
     try:
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
+        print(f"Connecting to SMTP server: {smtp_server}:{smtp_port}...", file=sys.stderr)
+        
+        # Port 465 uses SSL, port 587 uses STARTTLS
+        if smtp_port == 465:
+            # Use SSL connection for port 465
+            server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30)
+            print("Using SSL connection (port 465)", file=sys.stderr)
+        else:
+            # Use STARTTLS for port 587 and others
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+            print("Connected, starting TLS...", file=sys.stderr)
             server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.send_message(msg)
-        print(f"Email sent successfully to {to_email}", file=sys.stderr)
+            print("TLS started successfully", file=sys.stderr)
+        
+        # Set debug level for troubleshooting (uncomment to see SMTP conversation)
+        # server.set_debuglevel(1)
+        
+        print(f"Logging in as {smtp_user}...", file=sys.stderr)
+        server.login(smtp_user, smtp_password)
+        print("Login successful", file=sys.stderr)
+        
+        print(f"Sending email to {to_email}...", file=sys.stderr)
+        server.send_message(msg)
+        print(f"✅ Email sent successfully to {to_email}", file=sys.stderr)
         return True
-    except Exception as e:
-        print(f"Failed to send email: {e}", file=sys.stderr)
+        
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"SMTP Authentication Error: {e}", file=sys.stderr)
+        print("Please verify your SMTP_USER and SMTP_PASSWORD are correct.", file=sys.stderr)
+        print("For Gmail, make sure you're using an App Password (not your regular password).", file=sys.stderr)
         return False
+    except smtplib.SMTPConnectError as e:
+        print(f"SMTP Connection Error: Could not connect to {smtp_server}:{smtp_port}", file=sys.stderr)
+        print(f"Error details: {e}", file=sys.stderr)
+        print("Please verify SMTP_SERVER and SMTP_PORT are correct.", file=sys.stderr)
+        return False
+    except smtplib.SMTPServerDisconnected as e:
+        print(f"SMTP Server Disconnected: {e}", file=sys.stderr)
+        print("The server closed the connection unexpectedly.", file=sys.stderr)
+        print("This might be due to:", file=sys.stderr)
+        print("  - Incorrect SMTP port (try 587 for TLS or 465 for SSL)", file=sys.stderr)
+        print("  - Authentication failure", file=sys.stderr)
+        print("  - Server blocking the connection", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"Failed to send email: {type(e).__name__}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return False
+    finally:
+        # Ensure connection is closed
+        if server:
+            try:
+                server.quit()
+            except:
+                pass
 
 
 def parse_args():
