@@ -11,8 +11,11 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
+    outputs:
+      has_new_content: ${{ steps.dedup_check.outputs.has_new_content }}
+      crawl_date: ${{ steps.crawl_step.outputs.crawl_date }}
+      language: ${{ vars.LANGUAGE }}
 
     steps:
     - uses: actions/checkout@v4
@@ -156,60 +159,6 @@ jobs:
         echo "更新文件列表... / Updating file list..."
         ls data/*.jsonl | sed 's|data/||' > assets/file-list.txt
         echo "文件列表更新完成 / File list updated"
-
-    - name: Send Email Digest (Sign Language Papers)
-      if: steps.dedup_check.outputs.has_new_content == 'true'
-      run: |
-        source .venv/bin/activate
-        today=${{ steps.crawl_step.outputs.crawl_date }}
-        echo "📧 Sending email digest for sign language papers..."
-        
-        # Check if email configuration is available
-        if [ -z "${{ secrets.SMTP_USER }}" ] || [ -z "${{ secrets.SMTP_PASSWORD }}" ] || [ -z "${{ secrets.EMAIL_RECIPIENT }}" ]; then
-          echo "⚠️  Email configuration not set. Skipping email digest."
-          echo "ℹ️  To enable email notifications, set SMTP_USER, SMTP_PASSWORD, and EMAIL_RECIPIENT in repository Secrets"
-          exit 0
-        fi
-        
-        # Set environment variables for email script
-        export SMTP_SERVER="${{ secrets.SMTP_SERVER }}"
-        if [ -z "$SMTP_SERVER" ]; then
-          export SMTP_SERVER="smtp.gmail.com"
-        fi
-        export SMTP_PORT="${{ secrets.SMTP_PORT }}"
-        if [ -z "$SMTP_PORT" ]; then
-          export SMTP_PORT="587"
-        fi
-        export SMTP_USER="${{ secrets.SMTP_USER }}"
-        export SMTP_PASSWORD="${{ secrets.SMTP_PASSWORD }}"
-        export EMAIL_RECIPIENT="${{ secrets.EMAIL_RECIPIENT }}"
-        export EMAIL_FROM="${{ secrets.EMAIL_FROM }}"
-        if [ -z "$EMAIL_FROM" ]; then
-          export EMAIL_FROM="$SMTP_USER"
-        fi
-        
-        # Keywords for filtering (can be overridden via env var)
-        EMAIL_KEYWORDS="${EMAIL_KEYWORDS:-sign language signing gesture recognition}"
-        
-        # Run email digest script
-        cd notifications
-        AI_FILE="../data/${today}_AI_enhanced_${{ vars.LANGUAGE }}.jsonl"
-        
-        if [ -f "$AI_FILE" ]; then
-          python email_digest.py \
-            --data "$AI_FILE" \
-            --keywords $EMAIL_KEYWORDS \
-            --date "$today"
-          
-          if [ $? -eq 0 ]; then
-            echo "✅ Email digest sent successfully"
-          else
-            echo "⚠️  Email digest failed, but continuing workflow"
-          fi
-        else
-          echo "⚠️  AI enhanced file not found: $AI_FILE"
-          echo "⚠️  Skipping email digest"
-        fi
 
     - name: Generate password hash and inject into config
       if: steps.dedup_check.outputs.has_new_content == 'true'
@@ -424,3 +373,94 @@ jobs:
             fi
           fi
         done
+
+  # 独立的邮件发送Job / Independent Email Digest Job
+  send-email-digest:
+    runs-on: ubuntu-latest
+    needs: build
+    # 只有在有新内容时才运行 / Only run when there's new content
+    if: needs.build.outputs.has_new_content == 'true'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: data  # 从data分支获取最新数据 / Get latest data from data branch
+    
+    - name: Install dependencies
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        uv sync
+    
+    - name: Send Email Digest (Sign Language Papers)
+      run: |
+        source .venv/bin/activate
+        today=${{ needs.build.outputs.crawl_date }}
+        echo "📧 Sending email digest for sign language papers..."
+        
+        # Check if email configuration is available
+        if [ -z "${{ secrets.SMTP_USER }}" ] || [ -z "${{ secrets.SMTP_PASSWORD }}" ] || [ -z "${{ secrets.EMAIL_RECIPIENT }}" ]; then
+          echo "⚠️  Email configuration not set. Skipping email digest."
+          echo "ℹ️  To enable email notifications, set SMTP_USER, SMTP_PASSWORD, and EMAIL_RECIPIENT in repository Secrets"
+          exit 0
+        fi
+        
+        # Set environment variables for email script
+        export SMTP_SERVER="${{ secrets.SMTP_SERVER }}"
+        if [ -z "$SMTP_SERVER" ]; then
+          export SMTP_SERVER="smtp.gmail.com"
+        fi
+        export SMTP_PORT="${{ secrets.SMTP_PORT }}"
+        if [ -z "$SMTP_PORT" ]; then
+          export SMTP_PORT="587"
+        fi
+        export SMTP_USER="${{ secrets.SMTP_USER }}"
+        export SMTP_PASSWORD="${{ secrets.SMTP_PASSWORD }}"
+        export EMAIL_RECIPIENT="${{ secrets.EMAIL_RECIPIENT }}"
+        export EMAIL_FROM="${{ secrets.EMAIL_FROM }}"
+        if [ -z "$EMAIL_FROM" ]; then
+          export EMAIL_FROM="$SMTP_USER"
+        fi
+        
+        # Keywords for filtering (can be overridden via env var)
+        # Use comma as delimiter to preserve multi-word phrases
+        EMAIL_KEYWORDS="${EMAIL_KEYWORDS:-sign language,signing,gesture recognition}"
+        
+        # Run email digest script
+        cd notifications
+        AI_FILE="../data/${today}_AI_enhanced_${{ needs.build.outputs.language }}.jsonl"
+        
+        if [ -f "$AI_FILE" ]; then
+          # Convert comma-separated keywords to space-separated for argparse
+          # This preserves phrases while allowing argparse to parse them
+          KEYWORDS_ARRAY=()
+          IFS=',' read -ra KEYWORD_PHRASES <<< "$EMAIL_KEYWORDS"
+          for phrase in "${KEYWORD_PHRASES[@]}"; do
+            KEYWORDS_ARRAY+=("$phrase")
+          done
+          
+          python email_digest.py \
+            --data "$AI_FILE" \
+            --keywords "${KEYWORDS_ARRAY[@]}" \
+            --date "$today"
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Email digest sent successfully"
+          else
+            echo "❌ Email digest failed"
+            exit 1
+          fi
+        else
+          echo "⚠️  AI enhanced file not found: $AI_FILE"
+          echo "⚠️  Skipping email digest"
+          exit 1
+        fi
+    
+    - name: Email Summary
+      if: always()
+      run: |
+        if [ $? -eq 0 ]; then
+          echo "✅ 邮件发送Job完成 / Email digest job completed successfully"
+        else
+          echo "⚠️ 邮件发送Job失败 / Email digest job failed"
+        fi

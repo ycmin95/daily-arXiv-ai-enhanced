@@ -18,13 +18,15 @@ from datetime import datetime
 def filter_papers_by_keywords(data: List[Dict], keywords: List[str]) -> List[Dict]:
     """
     Filter papers that match any of the specified keywords.
+    Supports both single words and multi-word phrases (e.g., "sign language").
     Searches in: title, summary, and AI-generated fields.
     """
     if not keywords:
         return []
     
     filtered_papers = []
-    keyword_lower = [k.lower() for k in keywords]
+    # Normalize keywords: preserve phrases, convert to lowercase
+    keyword_lower = [k.lower().strip() for k in keywords if k.strip()]
     
     for paper in data:
         # Search text includes title, summary, and AI fields
@@ -36,7 +38,8 @@ def filter_papers_by_keywords(data: List[Dict], keywords: List[str]) -> List[Dic
             paper.get("AI", {}).get("method", ""),
         ]).lower()
         
-        # Check if any keyword matches
+        # Check if any keyword (phrase or word) matches in the search text
+        # Using 'in' operator handles both single words and phrases correctly
         if any(keyword in search_text for keyword in keyword_lower):
             filtered_papers.append(paper)
     
@@ -256,7 +259,7 @@ def parse_args():
         type=str,
         nargs="+",
         default=["sign language"],
-        help="Keywords to filter papers (default: 'sign language')"
+        help="Keywords to filter papers. Supports phrases (e.g., 'sign language'). Use quotes for multi-word keywords. (default: 'sign language')"
     )
     parser.add_argument(
         "--to-email",
