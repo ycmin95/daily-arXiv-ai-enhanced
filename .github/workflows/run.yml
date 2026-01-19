@@ -382,15 +382,21 @@ jobs:
     if: needs.build.outputs.has_new_content == 'true'
     
     steps:
-    - name: Checkout code
+    - name: Checkout code from main branch
       uses: actions/checkout@v4
-      with:
-        ref: data  # 从data分支获取最新数据 / Get latest data from data branch
+      # Checkout from main to get code and dependencies
     
     - name: Install dependencies
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
+    
+    - name: Fetch data files from data branch
+      run: |
+        echo "📥 Fetching data files from data branch..."
+        git fetch origin data:data
+        git checkout data -- data/
+        echo "✅ Data files fetched successfully"
     
     - name: Send Email Digest (Multi-User Support)
       run: |
