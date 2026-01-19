@@ -392,16 +392,16 @@ jobs:
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
     
-    - name: Send Email Digest (Sign Language Papers)
+    - name: Send Email Digest (Multi-User Support)
       run: |
         source .venv/bin/activate
         today=${{ needs.build.outputs.crawl_date }}
-        echo "📧 Sending email digest for sign language papers..."
+        echo "📧 Sending personalized email digests..."
         
         # Check if email configuration is available
-        if [ -z "${{ secrets.SMTP_USER }}" ] || [ -z "${{ secrets.SMTP_PASSWORD }}" ] || [ -z "${{ secrets.EMAIL_RECIPIENT }}" ]; then
-          echo "⚠️  Email configuration not set. Skipping email digest."
-          echo "ℹ️  To enable email notifications, set SMTP_USER, SMTP_PASSWORD, and EMAIL_RECIPIENT in repository Secrets"
+        if [ -z "${{ secrets.SMTP_USER }}" ] || [ -z "${{ secrets.SMTP_PASSWORD }}" ]; then
+          echo "⚠️  SMTP configuration not set. Skipping email digest."
+          echo "ℹ️  To enable email notifications, set SMTP_USER and SMTP_PASSWORD in repository Secrets"
           exit 0
         fi
         
@@ -416,32 +416,38 @@ jobs:
         fi
         export SMTP_USER="${{ secrets.SMTP_USER }}"
         export SMTP_PASSWORD="${{ secrets.SMTP_PASSWORD }}"
-        export EMAIL_RECIPIENT="${{ secrets.EMAIL_RECIPIENT }}"
         export EMAIL_FROM="${{ secrets.EMAIL_FROM }}"
         if [ -z "$EMAIL_FROM" ]; then
           export EMAIL_FROM="$SMTP_USER"
         fi
         
-        # Keywords for filtering (can be overridden via env var)
-        # Use comma as delimiter to preserve multi-word phrases
-        EMAIL_KEYWORDS="${EMAIL_KEYWORDS:-sign language,signing,gesture recognition}"
+        # Multi-user configuration (Priority 1)
+        # Format: [{"email": "user1@example.com", "keywords": "keyword1; keyword2"}, ...]
+        export EMAIL_RECIPIENTS_CONFIG='${{ secrets.EMAIL_RECIPIENTS_CONFIG }}'
+        
+        # Legacy single user support (Priority 2, fallback)
+        export EMAIL_RECIPIENT="${{ secrets.EMAIL_RECIPIENT }}"
+        
+        # Check if at least one recipient configuration exists
+        if [ -z "$EMAIL_RECIPIENTS_CONFIG" ] && [ -z "$EMAIL_RECIPIENT" ]; then
+          echo "⚠️  No recipients configured. Skipping email digest."
+          echo "ℹ️  Set EMAIL_RECIPIENTS_CONFIG (recommended) or EMAIL_RECIPIENT (legacy) in repository Secrets"
+          echo ""
+          echo "📝 Example EMAIL_RECIPIENTS_CONFIG format:"
+          echo '[{"email": "user1@example.com", "keywords": "gesture; sign language"}, {"email": "user2@example.com", "keywords": "hallucination"}]'
+          exit 0
+        fi
         
         # Run email digest script
         cd notifications
         AI_FILE="../data/${today}_AI_enhanced_${{ needs.build.outputs.language }}.jsonl"
         
         if [ -f "$AI_FILE" ]; then
-          # Convert comma-separated keywords to space-separated for argparse
-          # This preserves phrases while allowing argparse to parse them
-          KEYWORDS_ARRAY=()
-          IFS=',' read -ra KEYWORD_PHRASES <<< "$EMAIL_KEYWORDS"
-          for phrase in "${KEYWORD_PHRASES[@]}"; do
-            KEYWORDS_ARRAY+=("$phrase")
-          done
+          echo "📄 Using data file: $AI_FILE"
           
+          # Run the enhanced email digest script
           python email_digest.py \
             --data "$AI_FILE" \
-            --keywords "${KEYWORDS_ARRAY[@]}" \
             --date "$today"
           
           if [ $? -eq 0 ]; then
